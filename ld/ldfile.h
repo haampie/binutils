@@ -36,6 +36,8 @@ typedef struct search_dirs {
   const char *name;
   /* TRUE if this is from the command line.  */
   bool cmdline;
+  /* TRUE if this search path is used */
+  bool consumed;
 } search_dirs_type;
 
 extern search_dirs_type *search_head;

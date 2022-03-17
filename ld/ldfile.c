@@ -106,6 +106,7 @@ ldfile_add_library_path (const char *name, bool cmdline)
   new_dirs = (search_dirs_type *) xmalloc (sizeof (search_dirs_type));
   new_dirs->next = NULL;
   new_dirs->cmdline = cmdline;
+  new_dirs->consumed = 0;
   *search_tail_ptr = new_dirs;
   search_tail_ptr = &new_dirs->next;
 

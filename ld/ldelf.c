@@ -1614,7 +1614,7 @@ void
 ldelf_before_allocation (char *audit, char *depaudit,
 			 const char *default_interpreter_name)
 {
-  const char *rpath;
+  char *rpath;
   asection *sinterp;
   bfd *abfd;
   struct bfd_link_hash_entry *ehdr_start = NULL;
@@ -1669,7 +1669,59 @@ ldelf_before_allocation (char *audit, char *depaudit,
      by dynamic linking.  */
   rpath = command_line.rpath;
   if (rpath == NULL)
-    rpath = (const char *) getenv ("LD_RUN_PATH");
+    rpath = getenv ("LD_RUN_PATH");
+
+  search_dirs_type * search;
+
+  // Loop over every directory in search order, then figure out if it
+  // has been used to locate any library that's being linked.
+  // If so, append it to the rpaths.
+  for (search = search_head; search != NULL; search = search->next) {
+    size_t searchdir_len = strlen(search->name);
+    if (search->consumed) {
+      for (abfd = link_info.input_bfds; abfd; abfd = abfd->link.next) {
+        if (bfd_get_format (abfd) == bfd_object && ((abfd->flags) & DYNAMIC) != 0 && bfd_get_flavour (abfd) == bfd_target_elf_flavour && (elf_dyn_lib_class (abfd) & (DYN_AS_NEEDED | DYN_NO_NEEDED)) == 0 && elf_dt_name (abfd) != NULL) {
+          // check we're using the same path.
+          char * libdir = strrchr(abfd->filename, '/');
+          if (libdir == NULL) continue;
+          size_t libdir_len = libdir - abfd->filename;
+          if (searchdir_len != libdir_len) continue;
+          if (strncmp(search->name, abfd->filename, libdir_len) != 0) continue;
+
+          // prepend cwd if relative path
+          char extra_rpath[PATH_MAX];
+          size_t extra_rpath_len = searchdir_len;
+          if (search->name[0] != '/') {
+            if (getcwd(extra_rpath, sizeof(extra_rpath)) == NULL) continue;
+            size_t cwd_len = strlen(extra_rpath);
+
+            // Can't fit the concatenated path; ignore it.
+            extra_rpath_len = cwd_len + 1 + searchdir_len;
+            if (extra_rpath_len >= PATH_MAX) continue;
+            extra_rpath[cwd_len] = '/';
+            memcpy(extra_rpath + cwd_len + 1, search->name, searchdir_len + 1);
+          } else {
+            memcpy(extra_rpath, search->name, searchdir_len + 1);
+          }
+
+          if (rpath == NULL) {
+            rpath = (char *) xmalloc (extra_rpath_len + 1);
+            memcpy(rpath, extra_rpath, extra_rpath_len + 1);
+          } else {
+            size_t rpath_len = strlen (rpath);
+            char * buf = (char *) xmalloc (rpath_len + extra_rpath_len + 2);
+            memcpy(buf, rpath, rpath_len);
+            buf[rpath_len] = config.rpath_separator;
+            memcpy(buf + rpath_len + 1, extra_rpath, extra_rpath_len + 1);
+            free (rpath);
+            rpath = buf;
+          }
+
+          break;
+        }
+      }
+    }
+  }
 
   for (abfd = link_info.input_bfds; abfd; abfd = abfd->link.next)
     if (bfd_get_flavour (abfd) == bfd_target_elf_flavour)
@@ -1833,7 +1885,7 @@ ldelf_open_dynamic_archive (const char *arch, search_dirs_type *search,
       free (string);
       return false;
     }
-
+  search->consumed = true;
   entry->filename = string;
 
   /* We have found a dynamic object to include in the link.  The ELF
